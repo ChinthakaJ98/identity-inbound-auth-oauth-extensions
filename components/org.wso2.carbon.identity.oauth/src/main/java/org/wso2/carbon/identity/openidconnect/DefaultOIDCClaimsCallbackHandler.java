@@ -15,6 +15,8 @@
  */
 package org.wso2.carbon.identity.openidconnect;
 
+import com.nimbusds.jose.util.Base64URL;
+import com.nimbusds.jose.util.X509CertUtils;
 import com.nimbusds.jwt.JWTClaimsSet;
 import net.minidev.json.JSONArray;
 import org.apache.commons.lang.ArrayUtils;
@@ -23,6 +25,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.oltu.oauth2.common.exception.OAuthSystemException;
 import org.wso2.carbon.base.MultitenantConstants;
+import org.wso2.carbon.context.PrivilegedCarbonContext;
 import org.wso2.carbon.identity.application.authentication.framework.exception.FrameworkException;
 import org.wso2.carbon.identity.application.authentication.framework.handler.approles.ApplicationRolesResolver;
 import org.wso2.carbon.identity.application.authentication.framework.handler.approles.exception.ApplicationRolesException;
@@ -42,8 +45,11 @@ import org.wso2.carbon.identity.oauth.cache.AuthorizationGrantCache;
 import org.wso2.carbon.identity.oauth.cache.AuthorizationGrantCacheEntry;
 import org.wso2.carbon.identity.oauth.cache.AuthorizationGrantCacheKey;
 import org.wso2.carbon.identity.oauth.common.OAuthConstants;
+import org.wso2.carbon.identity.oauth.common.exception.InvalidOAuthClientException;
 import org.wso2.carbon.identity.oauth.config.OAuthServerConfiguration;
+import org.wso2.carbon.identity.oauth.dao.OAuthAppDO;
 import org.wso2.carbon.identity.oauth.internal.OAuthComponentServiceHolder;
+import org.wso2.carbon.identity.oauth2.IdentityOAuth2ClientException;
 import org.wso2.carbon.identity.oauth2.IdentityOAuth2Exception;
 import org.wso2.carbon.identity.oauth2.RequestObjectException;
 import org.wso2.carbon.identity.oauth2.authz.OAuthAuthzReqMessageContext;
@@ -52,9 +58,11 @@ import org.wso2.carbon.identity.oauth2.device.cache.DeviceAuthorizationGrantCach
 import org.wso2.carbon.identity.oauth2.device.cache.DeviceAuthorizationGrantCacheKey;
 import org.wso2.carbon.identity.oauth2.dto.OAuth2AuthorizeReqDTO;
 import org.wso2.carbon.identity.oauth2.internal.OAuth2ServiceComponentHolder;
+import org.wso2.carbon.identity.oauth2.model.HttpRequestHeader;
 import org.wso2.carbon.identity.oauth2.model.RefreshTokenValidationDataDO;
 import org.wso2.carbon.identity.oauth2.token.OAuthTokenReqMessageContext;
 import org.wso2.carbon.identity.oauth2.token.handlers.grant.RefreshGrantHandler;
+import org.wso2.carbon.identity.oauth2.util.OAuth2Util;
 import org.wso2.carbon.identity.openidconnect.internal.OpenIDConnectServiceComponentHolder;
 import org.wso2.carbon.identity.openidconnect.model.RequestedClaim;
 import org.wso2.carbon.identity.organization.management.service.exception.OrganizationManagementException;
@@ -64,6 +72,8 @@ import org.wso2.carbon.user.api.UserStoreException;
 import org.wso2.carbon.user.core.common.User;
 import org.wso2.carbon.utils.multitenancy.MultitenantUtils;
 
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -92,6 +102,9 @@ public class DefaultOIDCClaimsCallbackHandler implements CustomClaimsCallbackHan
     private static final Log log = LogFactory.getLog(DefaultOIDCClaimsCallbackHandler.class);
     private static final String OAUTH2 = "oauth2";
     private static final String OIDC_DIALECT = "http://wso2.org/oidc/claim";
+    private static final String CNF_CLAIM = "cnf";
+    private static final String CONFIG_NOT_FOUND = "CONFIG_NOT_FOUND";
+    private static final String JAVAX_SERVLET_REQUEST_CERTIFICATE = "javax.servlet.request.X509Certificate";
 
     @Override
     public JWTClaimsSet handleCustomClaims(JWTClaimsSet.Builder jwtClaimsSetBuilder, OAuthTokenReqMessageContext
@@ -99,6 +112,18 @@ public class DefaultOIDCClaimsCallbackHandler implements CustomClaimsCallbackHan
         try {
             Map<String, Object> userClaimsInOIDCDialect = getUserClaimsInOIDCDialect(tokenReqMessageContext);
             tokenReqMessageContext.addProperty(ID_TOKEN_USER_CLAIMS_PROP_KEY, userClaimsInOIDCDialect.keySet());
+            String clientId = tokenReqMessageContext.getOauth2AccessTokenReqDTO().getClientId();
+            try {
+                if (OAuth2Util.isFapiConformantApp(clientId) ||
+                        isTlsClientCertificateBoundAccessTokensEnabled(clientId)) {
+                    addCnfClaimToOIDCDialect(tokenReqMessageContext, userClaimsInOIDCDialect);
+                }
+            } catch (IdentityOAuth2ClientException e) {
+                throw new IdentityOAuth2Exception("Could not find an existing app for clientId: " + clientId, e);
+            } catch (IdentityOAuth2Exception e) {
+                throw new IdentityOAuth2Exception("Error while obtaining the service provider for client_id: " +
+                        clientId, e);
+            }
             return setClaimsToJwtClaimSet(jwtClaimsSetBuilder, userClaimsInOIDCDialect);
         } catch (OAuthSystemException e) {
             if (log.isDebugEnabled()) {
@@ -873,5 +898,63 @@ public class DefaultOIDCClaimsCallbackHandler implements CustomClaimsCallbackHan
             return true;
         }
         return StringUtils.contains(claimValue, multiAttributeSeparator);
+    }
+
+    /**
+     * Add the CNF claim to the OIDC dialect when a TLS certificate is passed in the request.
+     *
+     * @param tokenReqMessageContext       Token request message context.
+     * @param userClaimsInOIDCDialect      Map of the user claims in the OIDC dialect.
+     * @throws IdentityOAuth2Exception     An exception is thrown if the cert could not be obtained from the request.
+     */
+    private void addCnfClaimToOIDCDialect(OAuthTokenReqMessageContext tokenReqMessageContext,
+                                          Map<String, Object> userClaimsInOIDCDialect)
+            throws IdentityOAuth2Exception {
+        
+        Base64URL certThumbprint;
+        X509Certificate certificate = null;
+        String headerName = Optional.ofNullable(IdentityUtil.getProperty(OAuthConstants.MTLS_AUTH_HEADER))
+                .orElse(CONFIG_NOT_FOUND);
+
+        HttpRequestHeader[] requestHeaders = tokenReqMessageContext.getOauth2AccessTokenReqDTO()
+                .getHttpRequestHeaders();
+        Object certObject = Optional.ofNullable(tokenReqMessageContext.getOauth2AccessTokenReqDTO()
+                .getHttpServletRequestWrapper().getAttribute(JAVAX_SERVLET_REQUEST_CERTIFICATE)).orElse(null);
+
+        if (requestHeaders != null && requestHeaders.length != 0) {
+            Optional<HttpRequestHeader> certHeader =
+                    Arrays.stream(requestHeaders).filter(h -> headerName.equals(h.getName())).findFirst();
+            if (certHeader.isPresent()) {
+                try {
+                    certificate = OAuth2Util.parseCertificate(certHeader.get().getValue()[0]);
+                } catch (CertificateException e) {
+                    throw new IdentityOAuth2Exception("Error occurred while extracting the certificate", e);
+                }
+            }
+        } else if (certObject instanceof X509Certificate) {
+            certificate = (X509Certificate) certObject;
+        }
+        if (certificate != null) {
+            certThumbprint = X509CertUtils.computeSHA256Thumbprint(certificate);
+            userClaimsInOIDCDialect.put(CNF_CLAIM, Collections.singletonMap("x5t#S256", certThumbprint));
+        }
+    }
+
+    /**
+     * Retrieve whether the application is configured to issue TLS client certificate bound access tokens.
+     *
+     * @param  clientId      Client ID of the application.
+     * @throws IdentityOAuth2Exception An exception is thrown if app information cannot be extracted from the client ID.
+     */
+    private boolean isTlsClientCertificateBoundAccessTokensEnabled(String clientId) throws IdentityOAuth2Exception {
+
+        String tenantDomain = PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantDomain();
+        try {
+            OAuthAppDO oAuthAppDO = OAuth2Util.getAppInformationByClientId(clientId, tenantDomain);
+            return oAuthAppDO.isTlsClientCertificateBoundAccessTokens();
+        } catch (IdentityOAuth2Exception | InvalidOAuthClientException e) {
+            throw new IdentityOAuth2Exception("Error occurred while retrieving app information for client id: " +
+                    clientId + " of tenantDomain: " + tenantDomain, e);
+        }
     }
 }

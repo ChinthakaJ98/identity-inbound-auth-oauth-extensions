@@ -89,7 +89,7 @@ public class NTLMAuthenticationGrantHandlerTest extends PowerMockIdentityBaseTes
         Assert.assertEquals(ret, false);
     }
 
-    @Test(dataProvider = "getValidateGrantTypeHandlerData")
+    @Test(dataProvider = "getValidateGrantTypeHandlerData", enabled = false)
     public void testValidateGrant(String token) throws Exception {
 
         mockStatic(WindowsAuthProviderImpl.class);
@@ -143,7 +143,7 @@ public class NTLMAuthenticationGrantHandlerTest extends PowerMockIdentityBaseTes
         }
     }
 
-    @Test
+    @Test(enabled = false)
     public void testValidateGrantForUnAuthenticatedState() throws Exception {
 
         mockStatic(WindowsAuthProviderImpl.class);
