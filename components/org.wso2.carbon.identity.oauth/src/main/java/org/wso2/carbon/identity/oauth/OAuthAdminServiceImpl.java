@@ -116,6 +116,8 @@ public class OAuthAdminServiceImpl {
     protected static final Log LOG = LogFactory.getLog(OAuthAdminServiceImpl.class);
     private static final String SCOPE_VALIDATION_REGEX = "^[^?#/()]*$";
     private static final int MAX_RETRY_ATTEMPTS = 3;
+    private static final String TOKEN_EP_SIGNATURE_ALGS_SUPPORTED = "OAuth.OpenIDConnect." +
+            "SupportedTokenEndpointSigningAlgorithms.SupportedTokenEndpointSigningAlgorithm";
 
     /**
      * Registers an consumer secret against the logged in user. A given user can only have a single
@@ -2105,5 +2107,15 @@ public class OAuthAdminServiceImpl {
                 LOG.debug("OAuthApplicationMgtListener is triggered after revoking the OAuth secret.");
             }
         }
+    }
+
+    public List<String> getSupportedClientAuthenticationMethods() {
+
+        return OAuth2Util.getSupportedClientAuthenticationMethods();
+    }
+
+    public List<String> getSupportedTokenEndpointSignatureAlgorithms() {
+
+        return IdentityUtil.getPropertyAsList(TOKEN_EP_SIGNATURE_ALGS_SUPPORTED);
     }
 }

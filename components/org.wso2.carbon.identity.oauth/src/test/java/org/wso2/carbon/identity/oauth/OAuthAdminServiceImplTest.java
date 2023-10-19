@@ -102,6 +102,8 @@ public class OAuthAdminServiceImplTest extends PowerMockIdentityBaseTest {
     private static final String CONSUMER_SECRET = "consumer:secret";
     private static final String UPDATED_CONSUMER_SECRET = "updated:consumer:secret";
     private static final String INBOUND_AUTH2_TYPE = "oauth2";
+    private static final String TOKEN_EP_SIGNATURE_ALGS_SUPPORTED = "OAuth.OpenIDConnect." +
+            "SupportedTokenEndpointSigningAlgorithms.SupportedTokenEndpointSigningAlgorithm";
 
     @Mock
     private RealmConfiguration realmConfiguration;
@@ -762,5 +764,33 @@ public class OAuthAdminServiceImplTest extends PowerMockIdentityBaseTest {
         Mockito.when(mockTenant.getAssociatedOrganizationUUID()).thenReturn(null);
         Mockito.when(realmService.getTenantUserRealm(anyInt())).thenReturn(userRealm);
         Mockito.when(userRealm.getUserStoreManager()).thenReturn(mockAbstractUserStoreManager);
+    }
+
+    @Test
+    public void testGetSupportedClientAuthenticationMethods() {
+
+        List<String> supportedAuthMethods = Arrays.asList("client_secret_basic", "private_key_jwt");
+        mockStatic(OAuth2Util.class);
+        when(OAuth2Util.getSupportedClientAuthenticationMethods()).thenReturn(supportedAuthMethods);
+        OAuthAdminServiceImpl oAuthAdminService = new OAuthAdminServiceImpl();
+        List<String> tokenEpSupportedAuthMethods = oAuthAdminService.getSupportedClientAuthenticationMethods();
+        Assert.assertTrue(tokenEpSupportedAuthMethods.contains("client_secret_basic"));
+        Assert.assertTrue(tokenEpSupportedAuthMethods.contains("private_key_jwt"));
+        Assert.assertEquals(tokenEpSupportedAuthMethods.size(), 2);
+
+    }
+
+    @Test
+    public void testGetSupportedTokenEndpointSignatureAlgorithms() {
+
+        List<String> supportedAlgorithms = Arrays.asList("PS256", "ES256", "RS256");
+        mockStatic(IdentityUtil.class);
+        when(IdentityUtil.getPropertyAsList(TOKEN_EP_SIGNATURE_ALGS_SUPPORTED)).thenReturn(supportedAlgorithms);
+        OAuthAdminServiceImpl oAuthAdminService = new OAuthAdminServiceImpl();
+        List<String> tokenEpSupportedAlgorithms = oAuthAdminService.getSupportedTokenEndpointSignatureAlgorithms();
+        Assert.assertTrue(tokenEpSupportedAlgorithms.contains("PS256"));
+        Assert.assertTrue(tokenEpSupportedAlgorithms.contains("ES256"));
+        Assert.assertTrue(tokenEpSupportedAlgorithms.contains("RS256"));
+        Assert.assertEquals(tokenEpSupportedAlgorithms.size(), 3);
     }
 }
