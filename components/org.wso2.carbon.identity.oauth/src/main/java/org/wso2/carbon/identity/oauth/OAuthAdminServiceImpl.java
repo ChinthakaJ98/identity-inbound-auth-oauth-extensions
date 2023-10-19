@@ -2109,11 +2109,21 @@ public class OAuthAdminServiceImpl {
         }
     }
 
+    /**
+     * Retrieve the set of client authentication methods supported by the server.
+     *
+     * @return List of client authentication methods supported by the server.
+     */
     public List<String> getSupportedClientAuthenticationMethods() {
 
         return OAuth2Util.getSupportedClientAuthenticationMethods();
     }
 
+    /**
+     * Retrieve the set of signature algorithms supported at the token endpoint.
+     *
+     * @return List of signature algorithms supported at the token endpoint.
+     */
     public List<String> getSupportedTokenEndpointSignatureAlgorithms() {
 
         return IdentityUtil.getPropertyAsList(TOKEN_EP_SIGNATURE_ALGS_SUPPORTED);
