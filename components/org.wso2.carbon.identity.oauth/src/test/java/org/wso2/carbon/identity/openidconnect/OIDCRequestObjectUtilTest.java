@@ -27,19 +27,22 @@ import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.testng.PowerMockTestCase;
 import org.powermock.reflect.internal.WhiteboxImpl;
 import org.testng.Assert;
-import org.testng.annotations.BeforeMethod;
+import org.testng.annotations.BeforeTest;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 import org.wso2.carbon.base.CarbonBaseConstants;
 import org.wso2.carbon.core.util.KeyStoreManager;
+import org.wso2.carbon.identity.application.common.model.ServiceProvider;
 import org.wso2.carbon.identity.central.log.mgt.internal.CentralLogMgtServiceComponentHolder;
 import org.wso2.carbon.identity.central.log.mgt.utils.LoggerUtils;
 import org.wso2.carbon.identity.core.util.IdentityTenantUtil;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.event.services.IdentityEventService;
+import org.wso2.carbon.identity.oauth.RequestObjectValidatorUtil;
 import org.wso2.carbon.identity.oauth.config.OAuthServerConfiguration;
 import org.wso2.carbon.identity.oauth.dao.OAuthAppDO;
 import org.wso2.carbon.identity.oauth2.RequestObjectException;
+import org.wso2.carbon.identity.oauth2.TestConstants;
 import org.wso2.carbon.identity.oauth2.model.OAuth2Parameters;
 import org.wso2.carbon.identity.oauth2.util.OAuth2Util;
 import org.wso2.carbon.identity.openidconnect.model.Constants;
@@ -67,7 +70,7 @@ import static org.wso2.carbon.utils.multitenancy.MultitenantConstants.SUPER_TENA
 
 @PrepareForTest({OAuth2Util.class, IdentityUtil.class, OAuthServerConfiguration.class, OAuthAuthzRequest.class,
         RequestObjectValidatorImpl.class, IdentityTenantUtil.class, LoggerUtils.class, IdentityEventService.class,
-        CentralLogMgtServiceComponentHolder.class})
+        CentralLogMgtServiceComponentHolder.class, RequestObjectValidatorUtil.class})
 @PowerMockIgnore({"javax.crypto.*"})
 public class OIDCRequestObjectUtilTest extends PowerMockTestCase {
 
@@ -82,7 +85,7 @@ public class OIDCRequestObjectUtilTest extends PowerMockTestCase {
     @Mock
     private CentralLogMgtServiceComponentHolder centralLogMgtServiceComponentHolderMock;
 
-    @BeforeMethod
+    @BeforeTest
     public void setUp() throws Exception {
 
         System.setProperty(CarbonBaseConstants.CARBON_HOME,
@@ -92,8 +95,6 @@ public class OIDCRequestObjectUtilTest extends PowerMockTestCase {
         wso2KeyStore = getKeyStoreFromFile("wso2carbon.jks", "wso2carbon",
                 System.getProperty(CarbonBaseConstants.CARBON_HOME));
         rsaPrivateKey = (RSAPrivateKey) wso2KeyStore.getKey("wso2carbon", "wso2carbon".toCharArray());
-        mockStatic(LoggerUtils.class);
-        when(LoggerUtils.isDiagnosticLogsEnabled()).thenReturn(true);
 
     }
 
@@ -109,11 +110,12 @@ public class OIDCRequestObjectUtilTest extends PowerMockTestCase {
     public void testBuildRequestObjectTest(String requestObjectString, Map<String, Object> claims, boolean isSigned,
                                            boolean isEncrypted,
                                            boolean exceptionNotExpected,
-                                           String errorMsg) throws Exception {
+                                           String errorMsg, boolean isFAPITest) throws Exception {
 
         OAuth2Parameters oAuth2Parameters = new OAuth2Parameters();
         oAuth2Parameters.setTenantDomain("carbon.super");
         oAuth2Parameters.setClientId(TEST_CLIENT_ID_1);
+        oAuth2Parameters.setRedirectURI(TestConstants.CALLBACK);
 
         OAuthAuthzRequest oAuthAuthzRequest = mock(OAuthAuthzRequest.class);
         IdentityEventService eventServiceMock = mock(IdentityEventService.class);
@@ -132,8 +134,11 @@ public class OIDCRequestObjectUtilTest extends PowerMockTestCase {
         when((OAuth2Util.getPrivateKey(anyString(), anyInt()))).thenReturn(rsaPrivateKey);
         when(OAuth2Util.getX509CertOfOAuthApp(TEST_CLIENT_ID_1, MultitenantConstants.SUPER_TENANT_DOMAIN_NAME))
                 .thenReturn(clientKeyStore.getCertificate("wso2carbon"));
+        when(OAuth2Util.isFapiConformantApp(anyString())).thenReturn(isFAPITest);
+        when(OAuth2Util.getServiceProvider(anyString())).thenReturn(new ServiceProvider());
 
         OAuthAppDO oAuthAppDO = new OAuthAppDO();
+        oAuthAppDO.setRequestObjectSignatureValidationEnabled(isFAPITest);
         when(OAuth2Util.getAppInformationByClientId(TEST_CLIENT_ID_1)).thenReturn(oAuthAppDO);
 
         mockStatic(IdentityTenantUtil.class);
@@ -149,7 +154,6 @@ public class OIDCRequestObjectUtilTest extends PowerMockTestCase {
         requestObjectBuilderMap.put(REQUEST_PARAM_VALUE_BUILDER, requestParamRequestObjectBuilder);
         requestObjectBuilderMap.put(REQUEST_URI_PARAM_VALUE_BUILDER, null);
         when((oauthServerConfigurationMock.getRequestObjectBuilders())).thenReturn(requestObjectBuilderMap);
-
         try {
             OIDCRequestObjectUtil.buildRequestObject(oAuthAuthzRequest, oAuth2Parameters);
         } catch (RequestObjectException e) {

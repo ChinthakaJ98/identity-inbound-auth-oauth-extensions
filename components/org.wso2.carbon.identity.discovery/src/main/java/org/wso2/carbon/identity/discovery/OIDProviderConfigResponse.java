@@ -564,6 +564,8 @@ public class OIDProviderConfigResponse {
         configMap.put(DiscoveryConstants.RESPONSE_MODES_SUPPORTED, this.responseModesSupported);
         configMap.put(DiscoveryConstants.CODE_CHALLENGE_METHODS_SUPPORTED, this.codeChallengeMethodsSupported);
         configMap.put(DiscoveryConstants.DEVICE_AUTHORIZATION_ENDPOINT, this.deviceAuthorizationEndpoint);
+        configMap.put("tls_client_certificate_bound_access_tokens", true);
+
         return configMap;
     }
 }
